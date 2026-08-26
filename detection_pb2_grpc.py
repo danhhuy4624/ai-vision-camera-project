@@ -26,8 +26,7 @@ if _version_not_supported:
 
 
 class DetectionServiceStub(object):
-    """The service definition
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
         """Constructor.
@@ -43,8 +42,7 @@ class DetectionServiceStub(object):
 
 
 class DetectionServiceServicer(object):
-    """The service definition
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def SendFrame(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -69,8 +67,7 @@ def add_DetectionServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class DetectionService(object):
-    """The service definition
-    """
+    """Missing associated documentation comment in .proto file."""
 
     @staticmethod
     def SendFrame(request,

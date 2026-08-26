@@ -21,7 +21,6 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// A single detected object
 type BoundingBox struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ClassName     string                 `protobuf:"bytes,1,opt,name=class_name,json=className,proto3" json:"class_name,omitempty"`
@@ -106,11 +105,11 @@ func (x *BoundingBox) GetYMax() float32 {
 	return 0
 }
 
-// All detections within a single video frame
 type FrameData struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Timestamp     int64                  `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	Detections    []*BoundingBox         `protobuf:"bytes,2,rep,name=detections,proto3" json:"detections,omitempty"`
+	ImageData     []byte                 `protobuf:"bytes,3,opt,name=image_data,json=imageData,proto3" json:"image_data,omitempty"` // Make sure this line exists and file is saved (Ctrl + S)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -155,6 +154,13 @@ func (x *FrameData) GetTimestamp() int64 {
 func (x *FrameData) GetDetections() []*BoundingBox {
 	if x != nil {
 		return x.Detections
+	}
+	return nil
+}
+
+func (x *FrameData) GetImageData() []byte {
+	if x != nil {
+		return x.ImageData
 	}
 	return nil
 }
@@ -225,12 +231,14 @@ const file_detection_proto_rawDesc = "" +
 	"\x05x_min\x18\x03 \x01(\x02R\x04xMin\x12\x13\n" +
 	"\x05y_min\x18\x04 \x01(\x02R\x04yMin\x12\x13\n" +
 	"\x05x_max\x18\x05 \x01(\x02R\x04xMax\x12\x13\n" +
-	"\x05y_max\x18\x06 \x01(\x02R\x04yMax\"a\n" +
+	"\x05y_max\x18\x06 \x01(\x02R\x04yMax\"\x80\x01\n" +
 	"\tFrameData\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\x03R\ttimestamp\x126\n" +
 	"\n" +
 	"detections\x18\x02 \x03(\v2\x16.detection.BoundingBoxR\n" +
-	"detections\">\n" +
+	"detections\x12\x1d\n" +
+	"\n" +
+	"image_data\x18\x03 \x01(\fR\timageData\">\n" +
 	"\bResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage2J\n" +

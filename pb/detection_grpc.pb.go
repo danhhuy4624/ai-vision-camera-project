@@ -25,8 +25,6 @@ const (
 // DetectionServiceClient is the client API for DetectionService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-//
-// The service definition
 type DetectionServiceClient interface {
 	SendFrame(ctx context.Context, in *FrameData, opts ...grpc.CallOption) (*Response, error)
 }
@@ -52,8 +50,6 @@ func (c *detectionServiceClient) SendFrame(ctx context.Context, in *FrameData, o
 // DetectionServiceServer is the server API for DetectionService service.
 // All implementations must embed UnimplementedDetectionServiceServer
 // for forward compatibility.
-//
-// The service definition
 type DetectionServiceServer interface {
 	SendFrame(context.Context, *FrameData) (*Response, error)
 	mustEmbedUnimplementedDetectionServiceServer()

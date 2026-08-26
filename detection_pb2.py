@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0f\x64\x65tection.proto\x12\tdetection\"q\n\x0b\x42oundingBox\x12\x12\n\nclass_name\x18\x01 \x01(\t\x12\x12\n\nconfidence\x18\x02 \x01(\x02\x12\r\n\x05x_min\x18\x03 \x01(\x02\x12\r\n\x05y_min\x18\x04 \x01(\x02\x12\r\n\x05x_max\x18\x05 \x01(\x02\x12\r\n\x05y_max\x18\x06 \x01(\x02\"J\n\tFrameData\x12\x11\n\ttimestamp\x18\x01 \x01(\x03\x12*\n\ndetections\x18\x02 \x03(\x0b\x32\x16.detection.BoundingBox\",\n\x08Response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t2J\n\x10\x44\x65tectionService\x12\x36\n\tSendFrame\x12\x14.detection.FrameData\x1a\x13.detection.ResponseB\x06Z\x04./pbb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0f\x64\x65tection.proto\x12\tdetection\"q\n\x0b\x42oundingBox\x12\x12\n\nclass_name\x18\x01 \x01(\t\x12\x12\n\nconfidence\x18\x02 \x01(\x02\x12\r\n\x05x_min\x18\x03 \x01(\x02\x12\r\n\x05y_min\x18\x04 \x01(\x02\x12\r\n\x05x_max\x18\x05 \x01(\x02\x12\r\n\x05y_max\x18\x06 \x01(\x02\"^\n\tFrameData\x12\x11\n\ttimestamp\x18\x01 \x01(\x03\x12*\n\ndetections\x18\x02 \x03(\x0b\x32\x16.detection.BoundingBox\x12\x12\n\nimage_data\x18\x03 \x01(\x0c\",\n\x08Response\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t2J\n\x10\x44\x65tectionService\x12\x36\n\tSendFrame\x12\x14.detection.FrameData\x1a\x13.detection.ResponseB\x06Z\x04./pbb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -35,9 +35,9 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_BOUNDINGBOX']._serialized_start=30
   _globals['_BOUNDINGBOX']._serialized_end=143
   _globals['_FRAMEDATA']._serialized_start=145
-  _globals['_FRAMEDATA']._serialized_end=219
-  _globals['_RESPONSE']._serialized_start=221
-  _globals['_RESPONSE']._serialized_end=265
-  _globals['_DETECTIONSERVICE']._serialized_start=267
-  _globals['_DETECTIONSERVICE']._serialized_end=341
+  _globals['_FRAMEDATA']._serialized_end=239
+  _globals['_RESPONSE']._serialized_start=241
+  _globals['_RESPONSE']._serialized_end=285
+  _globals['_DETECTIONSERVICE']._serialized_start=287
+  _globals['_DETECTIONSERVICE']._serialized_end=361
 # @@protoc_insertion_point(module_scope)

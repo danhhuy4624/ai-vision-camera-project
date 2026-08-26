@@ -6,21 +6,29 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"sync"
+	"time"
 
 	"ai-camera/pb"
 
 	"google.golang.org/grpc"
-
-	// Import the pure-go sqlite driver anonymously
+	"gopkg.in/gomail.v2"
 	_ "modernc.org/sqlite"
 )
 
 type server struct {
 	pb.UnimplementedDetectionServiceServer
-	db *sql.DB // Attach the database connection to the server struct
+	db *sql.DB
 }
 
-// initDB creates the SQLite file and builds the schema
+// Global variables for throttling email notifications safely across concurrent gRPC calls
+var (
+	lastEmailTime time.Time
+	emailMutex    sync.Mutex
+)
+
+// initDB initializes the SQLite database file and creates the detections schema
 func initDB(filepath string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", filepath)
 	if err != nil {
@@ -48,13 +56,46 @@ func initDB(filepath string) (*sql.DB, error) {
 	return db, nil
 }
 
-// SendFrame receives the payload and persists it to SQLite
+// sendEmailAlert writes the frame image to disk and delivers an email notification with attachment
+func sendEmailAlert(className string, imageBytes []byte, timestamp int64) {
+	// 1. Save frame locally as a JPEG
+	filename := fmt.Sprintf("alert_%d.jpg", timestamp)
+	err := os.WriteFile(filename, imageBytes, 0644)
+	if err != nil {
+		log.Printf("Failed to save image locally: %v", err)
+		return
+	}
+
+	// 2. Configure credentials and construct message
+	fromEmail := "darkcookieman88@gmail.com"
+	toEmail := "nguyendanhhuy5@gmail.com"
+	appPassword := "osja shla nlep absj"
+
+	m := gomail.NewMessage()
+	m.SetHeader("From", fromEmail)
+	m.SetHeader("To", toEmail)
+	m.SetHeader("Subject", fmt.Sprintf("Camera Alert: %s Detected", className))
+	m.SetBody("text/plain", fmt.Sprintf("Your AI camera detected %s at timestamp %d. See the attached snapshot.", className, timestamp))
+	m.Attach(filename)
+
+	// 3. Dial Gmail SMTP on port 587
+	d := gomail.NewDialer("smtp.gmail.com", 587, fromEmail, appPassword)
+
+	if err := d.DialAndSend(m); err != nil {
+		log.Printf("Failed to send email alert: %v", err)
+		return
+	}
+
+	log.Println("--> Real-time email alert with photo sent successfully!")
+}
+
+// SendFrame handles incoming gRPC frame detections from the Python client
 func (s *server) SendFrame(ctx context.Context, req *pb.FrameData) (*pb.Response, error) {
 	if len(req.Detections) == 0 {
 		return &pb.Response{Success: true, Message: "Empty frame ignored"}, nil
 	}
 
-	// Prepare the statement for secure, high-performance batch inserting
+	// 1. Insert detections into SQLite via prepared statement
 	stmt, err := s.db.Prepare(`
 		INSERT INTO detections (timestamp, class_name, confidence, x_min, y_min, x_max, y_max) 
 		VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -65,7 +106,6 @@ func (s *server) SendFrame(ctx context.Context, req *pb.FrameData) (*pb.Response
 	}
 	defer stmt.Close()
 
-	// Execute the prepared statement for each detection in the frame
 	for _, det := range req.Detections {
 		_, err := stmt.Exec(
 			req.Timestamp,
@@ -80,33 +120,52 @@ func (s *server) SendFrame(ctx context.Context, req *pb.FrameData) (*pb.Response
 			log.Printf("Failed to insert record: %v", err)
 		}
 	}
-
 	fmt.Printf("Saved %d detections to SQLite at timestamp %d\n", len(req.Detections), req.Timestamp)
-	return &pb.Response{Success: true, Message: "Detections saved"}, nil
+
+	// 2. Evaluate alert trigger (1-minute cooldown per notification)
+	for _, det := range req.Detections {
+		if det.ClassName == "person" {
+			emailMutex.Lock()
+			if time.Since(lastEmailTime) > time.Minute {
+				lastEmailTime = time.Now()
+				emailMutex.Unlock()
+
+				// DEBUG: Check if image data exists
+				if len(req.ImageData) > 0 {
+					log.Println("Person detected and image received. Triggering email...")
+					go sendEmailAlert(det.ClassName, req.ImageData, req.Timestamp)
+				} else {
+					log.Println("WARNING: Person detected, but Python did not send any image data!")
+				}
+				break
+			}
+			emailMutex.Unlock()
+		}
+	}
+
+	return &pb.Response{Success: true, Message: "Detections processed"}, nil
 }
 
 func main() {
-	// 1. Initialize the SQLite Database
+	// 1. Initialize SQLite Database
 	db, err := initDB("./camera_logs.db")
 	if err != nil {
 		log.Fatalf("Database initialization failed: %v", err)
 	}
 	defer db.Close()
 
-	// 2. Open TCP listener
+	// 2. Open TCP listener on port 50051
 	lis, err := net.Listen("tcp", ":50051")
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		log.Fatalf("Failed to listen: %v", err)
 	}
 
-	// 3. Create and configure the gRPC server
+	// 3. Start gRPC Server
 	grpcServer := grpc.NewServer()
-
-	// Pass the database connection into our server instance
 	pb.RegisterDetectionServiceServer(grpcServer, &server{db: db})
 
 	log.Printf("Go gRPC backend listening on %v", lis.Addr())
 	if err := grpcServer.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v", err)
+		log.Fatalf("Failed to serve: %v", err)
 	}
 }
