@@ -1,17 +1,23 @@
 import cv2
 import time
+import grpc
 from ultralytics import YOLO
 
+# Import the generated protobuf modules
+import detection_pb2
+import detection_pb2_grpc
+
 def main():
-    # 1. Load the pre-trained YOLOv8 Nano model (downloads automatically on first run)
+    # 1. Connect to the Go gRPC server
+    channel = grpc.insecure_channel('localhost:50051')
+    stub = detection_pb2_grpc.DetectionServiceStub(channel)
+
+    # 2. Load the YOLO model
     print("Loading YOLOv8 model...")
     model = YOLO("yolov8n.pt")
-
-    # 2. Initialize the webcam using DirectShow for fast startup on Windows
-    # If 0 does not open your camera, try changing it to 1 or 2
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-
-    # Set camera resolution (optional: 640x480 is optimal for real-time CPU performance)
+    
+    # 3. Initialize webcam (DirectShow for Windows fast startup)
+    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW) 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
@@ -19,62 +25,64 @@ def main():
         print("Error: Could not access the webcam.")
         return
 
-    print("Webcam stream started. Press 'q' in the video window to exit.")
+    print("Webcam stream started. Press 'q' in the video window to stop.")
 
     prev_time = 0
 
     while True:
-        # Read a frame from the webcam
         ret, frame = cap.read()
         if not ret:
-            print("Failed to grab frame.")
             break
 
-        # 3. Run YOLO inference on the current frame
+        # 4. Run YOLO inference
         results = model(frame, stream=True, conf=0.5)
 
-        # 4. Extract the raw data manually
+        # 5. Prepare the gRPC payload
+        frame_data = detection_pb2.FrameData()
+        frame_data.timestamp = int(time.time() * 1000)
+
         for result in results:
-            # result.boxes contains all the detections for the current frame
             for box in result.boxes:
-                
-                # A. Extract Coordinates (x1, y1, x2, y2)
-                # .xyxy[0] gets the top-left and bottom-right pixel coordinates
-                # .tolist() converts the PyTorch tensor into a standard Python list
+                # Extract YOLO data
                 x1, y1, x2, y2 = box.xyxy[0].tolist()
+                conf = float(box.conf)
+                class_name = result.names[int(box.cls)]
 
-                # B. Extract Confidence Score
-                # .conf contains the confidence percentage (e.g., 0.85)
-                # float() converts it to a standard Python float
-                confidence = float(box.conf)
+                # Build the Protobuf payload for the Go server
+                det = frame_data.detections.add()
+                det.class_name = class_name
+                det.confidence = conf
+                det.x_min = x1
+                det.y_min = y1
+                det.x_max = x2
+                det.y_max = y2
 
-                # C. Extract Class Labels
-                # .cls contains the numeric ID of the class (e.g., 0 for person)
-                class_id = int(box.cls)
-                
-                # result.names is a dictionary mapping IDs to string names
-                class_name = result.names[class_id]
+                # Draw bounding box and label on the local video frame
+                cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+                label = f"{class_name} {conf:.2f}"
+                cv2.putText(frame, label, (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-                # Print the data to the terminal
-                print(f"Detected {class_name} ({confidence*100:.1f}%) at [{x1:.0f}, {y1:.0f}, {x2:.0f}, {y2:.0f}]")
-                
-                # Example custom logic: Only draw boxes for people
-                if class_name == "person":
-                     cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
-                     cv2.putText(frame, f"Intruder! {confidence:.2f}", (int(x1), int(y1)-10), 
-                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-            
-            # Use the manually modified frame for display instead of result.plot()
-            annotated_frame = frame
-            
-        # 5. Display the annotated frame in a window
-        cv2.imshow("AI Detection Camera Feed", annotated_frame)
+        # Calculate and display FPS
+        curr_time = time.time()
+        fps = 1 / (curr_time - prev_time) if prev_time > 0 else 0
+        prev_time = curr_time
+        cv2.putText(frame, f"FPS: {int(fps)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
 
-        # Break the loop if the user presses 'q'
+        # 6. Fire the gRPC request if objects were detected
+        if len(frame_data.detections) > 0:
+            try:
+                stub.SendFrame(frame_data)
+            except grpc.RpcError:
+                pass # Fail silently if the Go server is offline, keeps the video running
+
+        # 7. Display the video frame
+        cv2.imshow("AI Camera", frame)
+        
+        # Exit when the user presses 'q'
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-    # 6. Release resources
+    # Clean up resources
     cap.release()
     cv2.destroyAllWindows()
 
