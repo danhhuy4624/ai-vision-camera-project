@@ -1,0 +1,12 @@
+# Python Virtual Environment
+ai-cam/
+__pycache__/
+
+# YOLO AI Model Weights
+*.pt
+
+# SQLite Database
+*.db
+
+# Compiled Executables (if any)
+*.exe
