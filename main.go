@@ -59,7 +59,10 @@ func initDB(filepath string) (*sql.DB, error) {
 // sendEmailAlert writes the frame image to disk and delivers an email notification with attachment
 func sendEmailAlert(className string, imageBytes []byte, timestamp int64) {
 	// 1. Save frame locally as a JPEG
+	t := time.UnixMilli(timestamp)
+
 	filename := fmt.Sprintf("alert_%d.jpg", timestamp)
+
 	err := os.WriteFile(filename, imageBytes, 0644)
 	if err != nil {
 		log.Printf("Failed to save image locally: %v", err)
@@ -71,11 +74,13 @@ func sendEmailAlert(className string, imageBytes []byte, timestamp int64) {
 	toEmail := "nguyendanhhuy5@gmail.com"
 	appPassword := "osja shla nlep absj"
 
+	readableTime := t.Format("January 02, 2006 at 03:04:05 PM")
+
 	m := gomail.NewMessage()
 	m.SetHeader("From", fromEmail)
 	m.SetHeader("To", toEmail)
 	m.SetHeader("Subject", fmt.Sprintf("Camera Alert: %s Detected", className))
-	m.SetBody("text/plain", fmt.Sprintf("Your AI camera detected %s at timestamp %d. See the attached snapshot.", className, timestamp))
+	m.SetBody("text/plain", fmt.Sprintf("Your AI camera detected a %s on %s. See the attached snapshot.", className, readableTime))
 	m.Attach(filename)
 
 	// 3. Dial Gmail SMTP on port 587
