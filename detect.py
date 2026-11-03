@@ -10,7 +10,7 @@ def main():
     channel = grpc.insecure_channel('localhost:50051')
     stub = detection_pb2_grpc.DetectionServiceStub(channel)
 
-    print("Loading YOLOv8 model...")
+    print("Loading YOLOv8 model for tracking...")
     model = YOLO("yolov8n.pt")
     
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW) 
@@ -18,18 +18,16 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
     print("Webcam stream started. Press 'q' to stop.")
-    prev_time = 0
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        results = model(frame, stream=True, conf=0.5)
+        results = model.track(frame, persist=True, stream=True, conf=0.5)
 
         frame_data = detection_pb2.FrameData()
         frame_data.timestamp = int(time.time() * 1000)
-        
         person_detected = False
 
         for result in results:
@@ -37,10 +35,14 @@ def main():
                 x1, y1, x2, y2 = box.xyxy[0].tolist()
                 conf = float(box.conf)
                 class_name = result.names[int(box.cls)]
+                
+                # NEW: Extract the unique tracking ID (default to -1 if lost)
+                track_id = int(box.id[0]) if box.id is not None else -1
 
                 if class_name == "person":
                     person_detected = True
 
+                # Build Protobuf payload
                 det = frame_data.detections.add()
                 det.class_name = class_name
                 det.confidence = conf
@@ -48,23 +50,20 @@ def main():
                 det.y_min = y1
                 det.x_max = x2
                 det.y_max = y2
+                det.track_id = track_id # Inject the ID
 
+                # Draw bounding box with the unique ID
                 cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
-                text_y = int(y1) - 10 if int(y1) > 20 else int(y1) + 20
-                cv2.putText(frame, f"{class_name} {conf:.2f}", (int(x1), text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                label = f"{class_name} ID:{track_id} {conf:.2f}"
+                cv2.putText(frame, label, (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-        curr_time = time.time()
-        fps = 1 / (curr_time - prev_time) if prev_time > 0 else 0
-        prev_time = curr_time
-        cv2.putText(frame, f"FPS: {int(fps)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
-
-    
+        # Encode image for alerts
         if person_detected:
             success, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if success:
                 frame_data.image_data = buffer.tobytes()
-                print(f"DEBUG: Attached image of size {len(frame_data.image_data)} bytes")
 
+        # Stream to Go backend
         if len(frame_data.detections) > 0:
             try:
                 stub.SendFrame(frame_data)
@@ -72,7 +71,6 @@ def main():
                 pass 
 
         cv2.imshow("AI Camera", frame)
-        
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 

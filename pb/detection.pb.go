@@ -29,6 +29,7 @@ type BoundingBox struct {
 	YMin          float32                `protobuf:"fixed32,4,opt,name=y_min,json=yMin,proto3" json:"y_min,omitempty"`
 	XMax          float32                `protobuf:"fixed32,5,opt,name=x_max,json=xMax,proto3" json:"x_max,omitempty"`
 	YMax          float32                `protobuf:"fixed32,6,opt,name=y_max,json=yMax,proto3" json:"y_max,omitempty"`
+	TrackId       int32                  `protobuf:"varint,7,opt,name=track_id,json=trackId,proto3" json:"track_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -105,11 +106,18 @@ func (x *BoundingBox) GetYMax() float32 {
 	return 0
 }
 
+func (x *BoundingBox) GetTrackId() int32 {
+	if x != nil {
+		return x.TrackId
+	}
+	return 0
+}
+
 type FrameData struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Timestamp     int64                  `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
 	Detections    []*BoundingBox         `protobuf:"bytes,2,rep,name=detections,proto3" json:"detections,omitempty"`
-	ImageData     []byte                 `protobuf:"bytes,3,opt,name=image_data,json=imageData,proto3" json:"image_data,omitempty"` // Make sure this line exists and file is saved (Ctrl + S)
+	ImageData     []byte                 `protobuf:"bytes,3,opt,name=image_data,json=imageData,proto3" json:"image_data,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -221,7 +229,7 @@ var File_detection_proto protoreflect.FileDescriptor
 
 const file_detection_proto_rawDesc = "" +
 	"\n" +
-	"\x0fdetection.proto\x12\tdetection\"\xa0\x01\n" +
+	"\x0fdetection.proto\x12\tdetection\"\xbb\x01\n" +
 	"\vBoundingBox\x12\x1d\n" +
 	"\n" +
 	"class_name\x18\x01 \x01(\tR\tclassName\x12\x1e\n" +
@@ -231,7 +239,8 @@ const file_detection_proto_rawDesc = "" +
 	"\x05x_min\x18\x03 \x01(\x02R\x04xMin\x12\x13\n" +
 	"\x05y_min\x18\x04 \x01(\x02R\x04yMin\x12\x13\n" +
 	"\x05x_max\x18\x05 \x01(\x02R\x04xMax\x12\x13\n" +
-	"\x05y_max\x18\x06 \x01(\x02R\x04yMax\"\x80\x01\n" +
+	"\x05y_max\x18\x06 \x01(\x02R\x04yMax\x12\x19\n" +
+	"\btrack_id\x18\a \x01(\x05R\atrackId\"\x80\x01\n" +
 	"\tFrameData\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\x03R\ttimestamp\x126\n" +
 	"\n" +

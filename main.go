@@ -44,7 +44,8 @@ func initDB(filepath string) (*sql.DB, error) {
 		x_min REAL,
 		y_min REAL,
 		x_max REAL,
-		y_max REAL
+		y_max REAL,
+		track_id INTEGER
 	);`
 
 	_, err = db.Exec(createTableQuery)
@@ -100,9 +101,8 @@ func (s *server) SendFrame(ctx context.Context, req *pb.FrameData) (*pb.Response
 		return &pb.Response{Success: true, Message: "Empty frame ignored"}, nil
 	}
 
-	// 1. Insert detections into SQLite via prepared statement
 	stmt, err := s.db.Prepare(`
-		INSERT INTO detections (timestamp, class_name, confidence, x_min, y_min, x_max, y_max) 
+		INSERT INTO detections (timestamp, class_name, confidence, x_min, y_min, x_max, y_max, track_id) 
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
@@ -120,10 +120,12 @@ func (s *server) SendFrame(ctx context.Context, req *pb.FrameData) (*pb.Response
 			det.YMin,
 			det.XMax,
 			det.YMax,
+			det.TrackId,
 		)
 		if err != nil {
 			log.Printf("Failed to insert record: %v", err)
 		}
+		log.Printf("Logged %s (ID: %d) at timestamp %d", det.ClassName, det.TrackId, req.Timestamp)
 	}
 	fmt.Printf("Saved %d detections to SQLite at timestamp %d\n", len(req.Detections), req.Timestamp)
 

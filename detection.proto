@@ -11,12 +11,13 @@ message BoundingBox {
     float y_min = 4;
     float x_max = 5;
     float y_max = 6;
+    int32 track_id = 7;
 }
 
 message FrameData {
     int64 timestamp = 1;
     repeated BoundingBox detections = 2;
-    bytes image_data = 3; // Make sure this line exists and file is saved (Ctrl + S)
+    bytes image_data = 3;
 }
 
 message Response {
