@@ -22,10 +22,9 @@ type server struct {
 	db *sql.DB
 }
 
-// Global variables for throttling email notifications safely across concurrent gRPC calls
 var (
-	lastEmailTime time.Time
-	emailMutex    sync.Mutex
+	notifiedIDs = make(map[int32]bool)
+	emailMutex  sync.Mutex
 )
 
 // initDB initializes the SQLite database file and creates the detections schema
@@ -95,19 +94,29 @@ func sendEmailAlert(className string, imageBytes []byte, timestamp int64) {
 	log.Println("--> Real-time email alert with photo sent successfully!")
 }
 
-// SendFrame handles incoming gRPC frame detections from the Python client
+// handles incoming gRPC frame detections from the Python client
 func (s *server) SendFrame(ctx context.Context, req *pb.FrameData) (*pb.Response, error) {
 	if len(req.Detections) == 0 {
-		return &pb.Response{Success: true, Message: "Empty frame ignored"}, nil
+		return &pb.Response{
+			Success: true,
+			Message: "Empty frame ignored",
+		}, nil
 	}
 
+	// 1. Save detections to SQLite
 	stmt, err := s.db.Prepare(`
-		INSERT INTO detections (timestamp, class_name, confidence, x_min, y_min, x_max, y_max, track_id) 
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO detections (
+			timestamp, class_name, confidence,
+			x_min, y_min, x_max, y_max, track_id
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		log.Printf("Failed to prepare statement: %v", err)
-		return &pb.Response{Success: false, Message: "Database error"}, err
+		return &pb.Response{
+			Success: false,
+			Message: "Database error",
+		}, err
 	}
 	defer stmt.Close()
 
@@ -122,35 +131,68 @@ func (s *server) SendFrame(ctx context.Context, req *pb.FrameData) (*pb.Response
 			det.YMax,
 			det.TrackId,
 		)
+
 		if err != nil {
 			log.Printf("Failed to insert record: %v", err)
+			continue
 		}
-		log.Printf("Logged %s (ID: %d) at timestamp %d", det.ClassName, det.TrackId, req.Timestamp)
-	}
-	fmt.Printf("Saved %d detections to SQLite at timestamp %d\n", len(req.Detections), req.Timestamp)
 
-	// 2. Evaluate alert trigger (1-minute cooldown per notification)
+		log.Printf(
+			"Logged %s (ID: %d) at timestamp %d",
+			det.ClassName,
+			det.TrackId,
+			req.Timestamp,
+		)
+	}
+
+	fmt.Printf(
+		"Saved %d detections to SQLite at timestamp %d\n",
+		len(req.Detections),
+		req.Timestamp,
+	)
+
+	// 2. Alert triggering logic for new person detections
 	for _, det := range req.Detections {
-		if det.ClassName == "person" {
+
+		// Only process person detections with valid tracker IDs
+		if det.ClassName == "person" && det.TrackId != -1 {
+
 			emailMutex.Lock()
-			if time.Since(lastEmailTime) > time.Minute {
-				lastEmailTime = time.Now()
+
+			if !notifiedIDs[det.TrackId] {
+				notifiedIDs[det.TrackId] = true
 				emailMutex.Unlock()
 
-				// DEBUG: Check if image data exists
+				// Verify that the Python client attached image bytes
 				if len(req.ImageData) > 0 {
-					log.Println("Person detected and image received. Triggering email...")
-					go sendEmailAlert(det.ClassName, req.ImageData, req.Timestamp)
+					log.Printf(
+						"New person detected (ID: %d). Triggering email...",
+						det.TrackId,
+					)
+
+					go sendEmailAlert(
+						det.ClassName,
+						req.ImageData,
+						req.Timestamp,
+					)
 				} else {
-					log.Println("WARNING: Person detected, but Python did not send any image data!")
+					log.Println(
+						"WARNING: Person detected, but Python did not send image data!",
+					)
 				}
+
 				break
 			}
+
 			emailMutex.Unlock()
 		}
 	}
 
-	return &pb.Response{Success: true, Message: "Detections processed"}, nil
+	// 3. Return successful response
+	return &pb.Response{
+		Success: true,
+		Message: "Detections processed",
+	}, nil
 }
 
 func main() {
