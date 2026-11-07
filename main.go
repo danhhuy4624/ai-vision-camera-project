@@ -3,10 +3,15 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,15 +30,34 @@ type server struct {
 var (
 	notifiedIDs = make(map[int32]bool)
 	emailMutex  sync.Mutex
+
+	// Live video frame buffer for Web UI
+	latestFrame []byte
+	frameMutex  sync.RWMutex
 )
 
-// initDB initializes the SQLite database file and creates the detections schema
-func initDB(filepath string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", filepath)
+type DetectionRecord struct {
+	ID         int     `json:"id"`
+	Timestamp  int64   `json:"timestamp"`
+	TimeStr    string  `json:"time_str"`
+	ClassName  string  `json:"class_name"`
+	Confidence float32 `json:"confidence"`
+	TrackID    int32   `json:"track_id"`
+}
+
+type DashboardStats struct {
+	TotalDetections int               `json:"total_detections"`
+	UniquePersons   int               `json:"unique_persons"`
+	AlertsSent      int               `json:"alerts_sent"`
+	RecentLogs      []DetectionRecord `json:"recent_logs"`
+	Snapshots       []string          `json:"snapshots"`
+}
+
+func initDB(dbPath string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, err
 	}
-
 	createTableQuery := `
 	CREATE TABLE IF NOT EXISTS detections (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -46,170 +70,200 @@ func initDB(filepath string) (*sql.DB, error) {
 		y_max REAL,
 		track_id INTEGER
 	);`
-
 	_, err = db.Exec(createTableQuery)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create table: %w", err)
-	}
-
-	log.Println("SQLite database initialized successfully.")
-	return db, nil
+	return db, err
 }
 
-// sendEmailAlert writes the frame image to disk and delivers an email notification with attachment
-func sendEmailAlert(className string, imageBytes []byte, timestamp int64) {
-	// 1. Save frame locally as a JPEG
+func sendEmailAlert(className string, imageBytes []byte, timestamp int64, trackID int32, personCount int) {
 	t := time.UnixMilli(timestamp)
-
 	filename := fmt.Sprintf("alert_%d.jpg", timestamp)
 
-	err := os.WriteFile(filename, imageBytes, 0644)
-	if err != nil {
+	if err := os.WriteFile(filename, imageBytes, 0644); err != nil {
 		log.Printf("Failed to save image locally: %v", err)
 		return
 	}
 
-	// 2. Configure credentials and construct message
 	fromEmail := "darkcookieman88@gmail.com"
 	toEmail := "nguyendanhhuy5@gmail.com"
 	appPassword := "osja shla nlep absj"
-
 	readableTime := t.Format("January 02, 2006 at 03:04:05 PM")
+
+	var subject, body string
+	if personCount > 1 {
+		subject = fmt.Sprintf("Camera Alert: Another %s Detected (%d People in View)", className, personCount)
+		body = fmt.Sprintf(
+			"Your AI camera detected another %s appearance (Track ID #%d) on %s.\nThe current count of people on the webcam is %d. See the attached snapshot.",
+			className, trackID, readableTime, personCount,
+		)
+	} else {
+		subject = fmt.Sprintf("Camera Alert: %s (ID #%d) Detected", className, trackID)
+		body = fmt.Sprintf(
+			"Your AI camera detected a %s (Track ID #%d) on %s.\nThe current count of people on the webcam is 1. See the attached snapshot.",
+			className, trackID, readableTime,
+		)
+	}
 
 	m := gomail.NewMessage()
 	m.SetHeader("From", fromEmail)
 	m.SetHeader("To", toEmail)
-	m.SetHeader("Subject", fmt.Sprintf("Camera Alert: %s Detected", className))
-	m.SetBody("text/plain", fmt.Sprintf("Your AI camera detected a %s on %s. See the attached snapshot.", className, readableTime))
+
+	m.SetHeader("Subject", subject)
+	m.SetBody("text/plain", body)
+
 	m.Attach(filename)
 
-	// 3. Dial Gmail SMTP on port 587
-	d := gomail.NewDialer("smtp.gmail.com", 587, fromEmail, appPassword)
+	m.SetHeader("Subject", fmt.Sprintf("Camera Alert: %s (ID #%d) Detected", className, trackID))
+	m.SetBody("text/plain", fmt.Sprintf("Your AI camera detected a %s (Track ID #%d) on %s.", className, trackID, readableTime))
+	m.Attach(filename)
 
+	d := gomail.NewDialer("smtp.gmail.com", 587, fromEmail, appPassword)
 	if err := d.DialAndSend(m); err != nil {
 		log.Printf("Failed to send email alert: %v", err)
 		return
 	}
-
-	log.Println("--> Real-time email alert with photo sent successfully!")
+	log.Printf("--> Email alert sent for ID #%d!", trackID)
 }
 
-// handles incoming gRPC frame detections from the Python client
 func (s *server) SendFrame(ctx context.Context, req *pb.FrameData) (*pb.Response, error) {
-	if len(req.Detections) == 0 {
-		return &pb.Response{
-			Success: true,
-			Message: "Empty frame ignored",
-		}, nil
+	// 1. Update live video stream buffer for the Web UI
+	if len(req.ImageData) > 0 {
+		frameMutex.Lock()
+		latestFrame = req.ImageData
+		frameMutex.Unlock()
 	}
 
-	// 1. Save detections to SQLite
+	if len(req.Detections) == 0 {
+		return &pb.Response{Success: true, Message: "Frame updated"}, nil
+	}
+
+	// 2. Insert detections into SQLite
 	stmt, err := s.db.Prepare(`
-		INSERT INTO detections (
-			timestamp, class_name, confidence,
-			x_min, y_min, x_max, y_max, track_id
-		)
+		INSERT INTO detections (timestamp, class_name, confidence, x_min, y_min, x_max, y_max, track_id) 
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`)
-	if err != nil {
-		log.Printf("Failed to prepare statement: %v", err)
-		return &pb.Response{
-			Success: false,
-			Message: "Database error",
-		}, err
-	}
-	defer stmt.Close()
-
-	for _, det := range req.Detections {
-		_, err := stmt.Exec(
-			req.Timestamp,
-			det.ClassName,
-			det.Confidence,
-			det.XMin,
-			det.YMin,
-			det.XMax,
-			det.YMax,
-			det.TrackId,
-		)
-
-		if err != nil {
-			log.Printf("Failed to insert record: %v", err)
-			continue
+	if err == nil {
+		defer stmt.Close()
+		for _, det := range req.Detections {
+			_, _ = stmt.Exec(req.Timestamp, det.ClassName, det.Confidence, det.XMin, det.YMin, det.XMax, det.YMax, det.TrackId)
 		}
-
-		log.Printf(
-			"Logged %s (ID: %d) at timestamp %d",
-			det.ClassName,
-			det.TrackId,
-			req.Timestamp,
-		)
 	}
 
-	fmt.Printf(
-		"Saved %d detections to SQLite at timestamp %d\n",
-		len(req.Detections),
-		req.Timestamp,
-	)
-
-	// 2. Alert triggering logic for new person detections
+	// 3. Count how many people are currently visible in this frame
+	currentPersonCount := 0
 	for _, det := range req.Detections {
+		if det.ClassName == "person" {
+			currentPersonCount++
+		}
+	}
 
-		// Only process person detections with valid tracker IDs
+	// 4. Stateful ID Email Alert Trigger
+	for _, det := range req.Detections {
 		if det.ClassName == "person" && det.TrackId != -1 {
-
 			emailMutex.Lock()
-
 			if !notifiedIDs[det.TrackId] {
 				notifiedIDs[det.TrackId] = true
 				emailMutex.Unlock()
 
-				// Verify that the Python client attached image bytes
 				if len(req.ImageData) > 0 {
-					log.Printf(
-						"New person detected (ID: %d). Triggering email...",
-						det.TrackId,
-					)
-
-					go sendEmailAlert(
-						det.ClassName,
-						req.ImageData,
-						req.Timestamp,
-					)
-				} else {
-					log.Println(
-						"WARNING: Person detected, but Python did not send image data!",
-					)
+					go sendEmailAlert(det.ClassName, req.ImageData, req.Timestamp, det.TrackId, currentPersonCount)
 				}
-
 				break
 			}
-
 			emailMutex.Unlock()
 		}
 	}
 
-	// 3. Return successful response
-	return &pb.Response{
-		Success: true,
-		Message: "Detections processed",
-	}, nil
+	return &pb.Response{Success: true, Message: "Processed"}, nil
+}
+
+// HTTP handler for live MJPEG video stream
+func videoStreamHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+	for {
+		frameMutex.RLock()
+		frame := latestFrame
+		frameMutex.RUnlock()
+
+		if len(frame) > 0 {
+			fmt.Fprintf(w, "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n", len(frame))
+			if _, err := w.Write(frame); err != nil {
+				break
+			}
+			fmt.Fprint(w, "\r\n")
+		}
+		time.Sleep(33 * time.Millisecond) // ~30 FPS
+	}
+}
+
+// HTTP handler for dashboard statistics & activity logs
+func statsHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		stats := DashboardStats{RecentLogs: []DetectionRecord{}, Snapshots: []string{}}
+
+		_ = db.QueryRow(`SELECT COUNT(*) FROM detections`).Scan(&stats.TotalDetections)
+		_ = db.QueryRow(`SELECT COUNT(DISTINCT track_id) FROM detections WHERE class_name = 'person' AND track_id != -1`).Scan(&stats.UniquePersons)
+
+		emailMutex.Lock()
+		stats.AlertsSent = len(notifiedIDs)
+		emailMutex.Unlock()
+
+		rows, err := db.Query(`SELECT id, timestamp, class_name, confidence, track_id FROM detections ORDER BY id DESC LIMIT 25`)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var rec DetectionRecord
+				if err := rows.Scan(&rec.ID, &rec.Timestamp, &rec.ClassName, &rec.Confidence, &rec.TrackID); err == nil {
+					rec.TimeStr = time.UnixMilli(rec.Timestamp).Format("15:04:05")
+					stats.RecentLogs = append(stats.RecentLogs, rec)
+				}
+			}
+		}
+
+		// List saved alert snapshots
+		files, _ := filepath.Glob("alert_*.jpg")
+		sort.Sort(sort.Reverse(sort.StringSlice(files)))
+		if len(files) > 8 {
+			files = files[:8]
+		}
+		stats.Snapshots = files
+
+		json.NewEncoder(w).Encode(stats)
+	}
 }
 
 func main() {
-	// 1. Initialize SQLite Database
 	db, err := initDB("./camera_logs.db")
 	if err != nil {
-		log.Fatalf("Database initialization failed: %v", err)
+		log.Fatalf("DB init failed: %v", err)
 	}
 	defer db.Close()
 
-	// 2. Open TCP listener on port 50051
+	// Start HTTP Web UI Server on :8080
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "index.html")
+	})
+	http.HandleFunc("/video", videoStreamHandler)
+	http.HandleFunc("/api/stats", statsHandler(db))
+	http.HandleFunc("/snapshots/", func(w http.ResponseWriter, r *http.Request) {
+		file := strings.TrimPrefix(r.URL.Path, "/snapshots/")
+		if strings.HasPrefix(file, "alert_") && strings.HasSuffix(file, ".jpg") {
+			http.ServeFile(w, r, file)
+		}
+	})
+
+	go func() {
+		log.Println("Web UI Dashboard available at http://localhost:8080")
+		if err := http.ListenAndServe(":8080", nil); err != nil {
+			log.Fatalf("HTTP server error: %v", err)
+		}
+	}()
+
+	// Start gRPC Server on :50051
 	lis, err := net.Listen("tcp", ":50051")
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
-
-	// 3. Start gRPC Server
 	grpcServer := grpc.NewServer()
 	pb.RegisterDetectionServiceServer(grpcServer, &server{db: db})
 

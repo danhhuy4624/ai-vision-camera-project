@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Vision Security Console</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans">
+    <!-- Top Navbar -->
+    <header class="border-b border-slate-800 bg-slate-900/60 backdrop-blur px-6 py-4 flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+            <span class="relative flex h-3 w-3">
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+            </span>
+            <h1 class="text-xl font-bold tracking-tight">AI Vision Camera Console</h1>
+            <span class="text-xs bg-slate-800 text-slate-400 px-2.5 py-1 rounded-md border border-slate-700">YOLOv8 + ByteTrack</span>
+        </div>
+        <div id="clock" class="text-sm text-slate-400 font-mono"></div>
+    </header>
+
+    <main class="max-w-7xl mx-auto p-6 space-y-6">
+        <!-- KPI Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                <p class="text-xs uppercase tracking-wider text-slate-400">Unique Persons Tracked</p>
+                <p id="stat-persons" class="text-3xl font-bold text-emerald-400 mt-1">0</p>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                <p class="text-xs uppercase tracking-wider text-slate-400">Total Detections Logged</p>
+                <p id="stat-total" class="text-3xl font-bold text-sky-400 mt-1">0</p>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+                <p class="text-xs uppercase tracking-wider text-slate-400">Email Alerts Dispatched</p>
+                <p id="stat-alerts" class="text-3xl font-bold text-amber-400 mt-1">0</p>
+            </div>
+        </div>
+
+        <!-- Camera Feed + Live Activity Log -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Live Camera Feed -->
+            <div class="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col">
+                <div class="px-5 py-3 border-b border-slate-800 flex justify-between items-center">
+                    <span class="font-semibold text-sm">Live Camera Stream (640x480)</span>
+                    <span class="text-xs text-emerald-400 font-mono">gRPC :50051 → MJPEG</span>
+                </div>
+                <div class="bg-black flex items-center justify-center aspect-video">
+                    <img src="/video" alt="Waiting for Python detect.py stream..." class="w-full h-full object-contain" />
+                </div>
+            </div>
+
+            <!-- Recorded Activity Table -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl flex flex-col h-[480px]">
+                <div class="px-5 py-3 border-b border-slate-800 flex justify-between items-center">
+                    <span class="font-semibold text-sm">Recorded Activity Log</span>
+                    <span class="text-xs text-slate-400">Auto-refreshing</span>
+                </div>
+                <div class="overflow-y-auto flex-1 p-3">
+                    <table class="w-full text-left text-xs">
+                        <thead class="text-slate-400 border-b border-slate-800 sticky top-0 bg-slate-900">
+                            <tr>
+                                <th class="pb-2">Time</th>
+                                <th class="pb-2">Class</th>
+                                <th class="pb-2">Track ID</th>
+                                <th class="pb-2 text-right">Conf</th>
+                            </tr>
+                        </thead>
+                        <tbody id="activity-body" class="divide-y divide-slate-800/60 font-mono"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Captured Alert Snapshots -->
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+            <h2 class="font-semibold text-sm mb-4">Captured Intrusion Snapshots</h2>
+            <div id="snapshot-grid" class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <p class="text-xs text-slate-500 col-span-full">No alert snapshots saved yet.</p>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        async function fetchDashboardData() {
+            try {
+                const res = await fetch('/api/stats');
+                const data = await res.json();
+
+                document.getElementById('stat-persons').textContent = data.unique_persons;
+                document.getElementById('stat-total').textContent = data.total_detections;
+                document.getElementById('stat-alerts').textContent = data.alerts_sent;
+
+                const tbody = document.getElementById('activity-body');
+                tbody.innerHTML = data.recent_logs.map(row => `
+                    <tr class="hover:bg-slate-800/40">
+                        <td class="py-2 text-slate-400">${row.time_str}</td>
+                        <td class="py-2 font-sans font-medium ${row.class_name === 'person' ? 'text-emerald-400' : 'text-sky-400'}">${row.class_name}</td>
+                        <td class="py-2"><span class="bg-slate-800 px-2 py-0.5 rounded text-slate-200">#${row.track_id}</span></td>
+                        <td class="py-2 text-right text-slate-300">${(row.confidence * 100).toFixed(0)}%</td>
+                    </tr>
+                `).join('');
+
+                const grid = document.getElementById('snapshot-grid');
+                if (data.snapshots && data.snapshots.length > 0) {
+                    grid.innerHTML = data.snapshots.map(file => `
+                        <a href="/snapshots/${file}" target="_blank" class="group block bg-slate-950 border border-slate-800 rounded-lg overflow-hidden">
+                            <img src="/snapshots/${file}" class="w-full h-32 object-cover group-hover:opacity-80 transition" />
+                            <div class="p-2 text-[11px] font-mono text-slate-400 truncate">${file}</div>
+                        </a>
+                    `).join('');
+                }
+            } catch (err) {
+                console.error("Dashboard poll error:", err);
+            }
+        }
+
+        setInterval(fetchDashboardData, 1000);
+        setInterval(() => {
+            document.getElementById('clock').textContent = new Date().toLocaleTimeString();
+        }, 1000);
+        fetchDashboardData();
+    </script>
+</body>
+</html>
